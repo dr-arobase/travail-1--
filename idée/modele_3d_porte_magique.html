@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Porte magique – modèle 3D</title>
+<style>
+  body { margin: 0; overflow: hidden; background: #1b1530; font-family: "Segoe UI", system-ui, sans-serif; }
+  #panneau {
+    position: absolute; top: 16px; left: 16px; width: 290px; max-width: calc(100vw - 64px);
+    max-height: calc(100vh - 64px); overflow-y: auto;
+    background: rgba(20, 16, 40, .88); color: #eee; border-radius: 12px; padding: 16px;
+    box-shadow: 0 8px 30px rgba(0,0,0,.4);
+  }
+  h1 { font-size: 19px; margin: 0 0 2px; }
+  .sous { font-size: 12px; color: #aaa; margin-bottom: 12px; }
+  button {
+    display: block; width: 100%; margin: 6px 0; padding: 9px 10px; border: 0; border-radius: 8px;
+    font-size: 14px; cursor: pointer; background: #3b2f6b; color: #fff; text-align: left;
+  }
+  button:hover { background: #4d3f8a; }
+  button.principal { background: #6b46c1; }
+  button.principal:hover { background: #7c58d6; }
+  .ligne { display: flex; gap: 6px; }
+  .ligne button { flex: 1; text-align: center; font-size: 13px; }
+  #etat { margin: 10px 0 6px; padding: 8px 10px; border-radius: 8px; background: #0e0b1c; font-size: 13px; line-height: 1.6; }
+  #etat b { color: #c9b6ff; }
+  #serie {
+    margin-top: 6px; padding: 8px 10px; border-radius: 8px; background: #000; color: #5df28b;
+    font: 11px/1.5 Consolas, monospace; height: 100px; overflow: hidden; white-space: pre;
+  }
+  .titre-serie { font-size: 11px; color: #888; margin-top: 10px; }
+  .label {
+    color: #fff; font-size: 11px; background: rgba(15, 10, 35, .78); padding: 2px 7px;
+    border-radius: 5px; white-space: nowrap; border: 1px solid rgba(201, 182, 255, .35);
+  }
+  .label b { color: #ffd84d; }
+  #aide { position: absolute; bottom: 12px; right: 16px; color: #aaa; font-size: 12px; text-align: right; }
+  #erreur { position: absolute; inset: 0; display: none; place-items: center; color: #fff; text-align: center; padding: 20px; }
+</style>
+</head>
+<body>
+
+<div id="panneau">
+  <h1>Porte magique ✨</h1>
+  <div class="sous">Modèle 3D du prototype — itération 1</div>
+  <button class="principal" id="btnAutorise">▶ Visiteur autorisé (Marie)</button>
+  <button id="btnInconnu">✖ Visiteur inconnu</button>
+  <button id="btnOnOff">⏻ Système ON / OFF (bouton)</button>
+  <div class="ligne">
+    <button id="btnEtiquettes">🏷 Étiquettes</button>
+    <button id="btnSon">🔊 Son</button>
+  </div>
+  <div id="etat"></div>
+  <div class="titre-serie">Moniteur série (Arduino ⇄ Raspberry Pi)</div>
+  <div id="serie"></div>
+</div>
+<div id="aide">Glisser : tourner · Molette : zoom · Clic droit : déplacer<br>Clic sur le bouton poussoir : ON / OFF</div>
+<div id="erreur">Impossible de charger three.js.<br>Ce modèle a besoin d'une connexion Internet.</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/renderers/CSS2DRenderer.js"></script>
+<script>
+if (typeof THREE === "undefined") {
+  document.getElementById("erreur").style.display = "grid";
+  throw new Error("three.js non chargé");
+}
+
+// =====================================================================
+// Scène, caméra, rendu
+// =====================================================================
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x1b1530);
+scene.fog = new THREE.Fog(0x1b1530, 90, 170);
+
+const camera = new THREE.PerspectiveCamera(42, innerWidth / innerHeight, 0.1, 500);
+camera.position.set(34, 36, 56);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+
+const labelRenderer = new THREE.CSS2DRenderer();
+labelRenderer.setSize(innerWidth, innerHeight);
+Object.assign(labelRenderer.domElement.style, { position: "absolute", top: "0", pointerEvents: "none" });
+document.body.appendChild(labelRenderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.target.set(-2, 11, 1);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.49;
+controls.minDistance = 15;
+controls.maxDistance = 120;
+controls.update();
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x3a2d5c, 0.65));
+const soleil = new THREE.DirectionalLight(0xffffff, 0.85);
+soleil.position.set(25, 45, 30);
+soleil.castShadow = true;
+soleil.shadow.mapSize.set(2048, 2048);
+Object.assign(soleil.shadow.camera, { left: -35, right: 35, top: 35, bottom: -35, near: 1, far: 120 });
+scene.add(soleil);
+
+// =====================================================================
+// Outils de construction
+// =====================================================================
+function mat(couleur, options = {}) {
+  return new THREE.MeshStandardMaterial(Object.assign({ color: couleur, roughness: 0.6, metalness: 0.05 }, options));
+}
+function ajouter(geo, couleur, x, y, z, parent = scene, options) {
+  const m = new THREE.Mesh(geo, options instanceof THREE.Material ? options : mat(couleur, options));
+  m.position.set(x, y, z);
+  m.castShadow = m.receiveShadow = true;
+  parent.add(m);
+  return m;
+}
+const boite  = (w, h, d, c, x, y, z, p, o) => ajouter(new THREE.BoxGeometry(w, h, d), c, x, y, z, p, o);
+const cyl    = (rh, rb, h, c, x, y, z, p, o) => ajouter(new THREE.CylinderGeometry(rh, rb, h, 24), c, x, y, z, p, o);
+const sphere = (r, c, x, y, z, p, o) => ajouter(new THREE.SphereGeometry(r, 24, 16), c, x, y, z, p, o);
+
+function fil(points, couleur, rayon = 0.13) {
+  const courbe = new THREE.CatmullRomCurve3(points.map(p => new THREE.Vector3(...p)));
+  const m = new THREE.Mesh(new THREE.TubeGeometry(courbe, 80, rayon, 8, false), mat(couleur, { roughness: 0.35 }));
+  m.castShadow = true;
+  scene.add(m);
+  return m;
+}
+
+const etiquettes = [];
+function etiquette(html, x, y, z, parent = scene) {
+  const div = document.createElement("div");
+  div.className = "label";
+  div.innerHTML = html;
+  const objet = new THREE.CSS2DObject(div);
+  objet.position.set(x, y, z);
+  parent.add(objet);
+  etiquettes.push(objet);
+}
+
+// =====================================================================
+// Socle, murs, cadre de porte
+// =====================================================================
+const sol = new THREE.Mesh(new THREE.CircleGeometry(140, 64), mat(0x251c40, { roughness: 1 }));
+sol.rotation.x = -Math.PI / 2;
+sol.position.y = -1.25;
+sol.receiveShadow = true;
+scene.add(sol);
+
+boite(46, 1.2, 38, 0xb8875a, 0, -0.6, 1, scene, { roughness: 0.85 });   // planche de bois
+
+const FX = -2, FZ = -7;                                                  // centre du cadre
+const pierre = { roughness: 0.9 };
+boite(8, 26.4, 1, 0xd9d2ec, FX - 13.4, 13.2, FZ, scene, pierre);         // mur gauche
+boite(8, 26.4, 1, 0xd9d2ec, FX + 13.4, 13.2, FZ, scene, pierre);         // mur droit
+boite(1.4, 25.6, 1.4, 0xf4efe2, FX - 8.7, 12.8, FZ);                      // montants
+boite(1.4, 25.6, 1.4, 0xf4efe2, FX + 8.7, 12.8, FZ);
+boite(18.8, 1.4, 1.4, 0xf4efe2, FX, 26.3, FZ);                            // linteau
+for (let i = 0; i < 4; i++) {                                            // créneaux du château
+  boite(1.6, 1.4, 1.2, 0xd9d2ec, FX - 16.6 + i * 2.2, 27.1, FZ, scene, pierre);
+  boite(1.6, 1.4, 1.2, 0xd9d2ec, FX + 10.2 + i * 2.2, 27.1, FZ, scene, pierre);
+}
+
+// ---------- Porte (pivote sur la charnière gauche) ----------
+const pivot = new THREE.Group();
+pivot.position.set(FX - 8.0, 0, FZ);
+scene.add(pivot);
+const matPorte = mat(0x5b3fa0, { roughness: 0.45, emissive: 0x2a1060, emissiveIntensity: 0.25 });
+boite(15.6, 24.6, 0.7, 0, 7.9, 12.95, 0, pivot, matPorte);
+const or = { color: 0xe8b923, metalness: 0.8, roughness: 0.3, emissive: 0x6b4c00, emissiveIntensity: 0.4 };
+for (const [w, h, x, y] of [[13.6, 0.25, 7.9, 23.6], [13.6, 0.25, 7.9, 2.2], [0.25, 21.4, 1.1, 12.9], [0.25, 21.4, 14.7, 12.9]]) {
+  boite(w, h, 0.15, 0, x, y, 0.4, pivot, new THREE.MeshStandardMaterial(or));
+}
+const matEtoile = new THREE.MeshStandardMaterial({ color: 0xffe066, emissive: 0xffc400, emissiveIntensity: 0.7, metalness: 0.3 });
+for (const [x, y, s] of [[4, 20, 1], [10.5, 21, .8], [7.5, 17.5, 1.2], [3.5, 14, .7], [12, 15, 1], [6, 9, .8], [11, 7, .7], [4.5, 5, 1]]) {
+  const e = new THREE.Mesh(new THREE.OctahedronGeometry(0.55 * s), matEtoile);
+  e.scale.z = 0.3;
+  e.position.set(x, y, 0.42);
+  pivot.add(e);
+}
+sphere(0.55, 0, 14.0, 11.8, 0.7, pivot, new THREE.MeshStandardMaterial(or));   // poignée
+etiquette("Porte (bois + servo)", 7.9, 3.5, 0.6, pivot);
+
+// =====================================================================
+// Composants
+// =====================================================================
+const PCB_VERT = 0x1f7a3a, NOIR = 0x151515, METAL = { color: 0xc8c8c8, metalness: 0.85, roughness: 0.3 };
+
+// ---------- 4. Servomoteur sur le linteau, à la charnière ----------
+boite(2.3, 2.2, 1.25, 0x2a5bd7, FX - 8.0, 28.1, FZ);
+const corne = new THREE.Group();
+corne.position.set(FX - 8.0, 29.35, FZ);
+scene.add(corne);
+boite(2.4, 0.18, 0.5, 0xffffff, 0.9, 0, 0, corne);
+cyl(0.35, 0.35, 0.3, 0xffffff, 0, 0, 0, corne);
+etiquette("<b>4</b> Servomoteur SG90 · D9", FX - 8.0, 30.6, FZ);
+
+// ---------- 9. Caméra Pi au centre du linteau ----------
+boite(2.5, 2.5, 0.15, PCB_VERT, FX, 26.3, FZ + 0.8);
+const objectif = cyl(0.6, 0.6, 0.7, NOIR, FX, 26.3, FZ + 1.2);
+objectif.rotation.x = Math.PI / 2;
+sphere(0.32, 0, FX, 26.3, FZ + 1.55, scene, new THREE.MeshStandardMaterial({ color: 0x223a8a, metalness: 0.9, roughness: 0.1 }));
+etiquette("<b>9</b> Caméra Raspberry Pi", FX, 24.4, FZ + 1.4);
+
+// ---------- 2. Capteur PIR sur le linteau ----------
+boite(3.2, 0.15, 2.4, PCB_VERT, FX + 4.5, 27.1, FZ);
+ajouter(new THREE.SphereGeometry(1.15, 24, 16, 0, Math.PI * 2, 0, Math.PI / 2), 0xf8f8f8, FX + 4.5, 27.18, FZ, scene, { roughness: 0.3, transparent: true, opacity: 0.92 });
+etiquette("<b>2</b> Capteur PIR · D3", FX + 4.5, 29.4, FZ);
+
+// ---------- 5. LED RGB sur le linteau ----------
+const matRGB = new THREE.MeshStandardMaterial({ color: 0xdddddd, emissive: 0x000000, transparent: true, opacity: 0.95, roughness: 0.2 });
+sphere(0.6, 0, FX - 4.5, 27.75, FZ, scene, matRGB);
+cyl(0.6, 0.6, 0.5, 0xeeeeee, FX - 4.5, 27.25, FZ, scene, { transparent: true, opacity: 0.6 });
+const lumiereRGB = new THREE.PointLight(0xffffff, 0, 30);
+lumiereRGB.position.set(FX - 4.5, 28.5, FZ + 1);
+scene.add(lumiereRGB);
+etiquette("<b>5</b> LED RGB · D10-D12", FX - 4.5, 29.4, FZ);
+
+// ---------- 3. Ultrason HC-SR04 sur le mur droit ----------
+const HX = FX + 13.4, HY = 10, HZ = FZ + 0.6;
+boite(4.5, 2, 0.15, 0x1d4fb8, HX, HY, HZ);
+for (const dx of [-1.2, 1.2]) {
+  const t = cyl(0.8, 0.8, 1.1, 0xcfcfcf, HX + dx, HY, HZ + 0.6, scene, METAL);
+  t.rotation.x = Math.PI / 2;
+  const grille = cyl(0.65, 0.65, 0.05, 0x333333, HX + dx, HY, HZ + 1.17);
+  grille.rotation.x = Math.PI / 2;
+}
+etiquette("<b>3</b> Ultrason HC-SR04 · D4/D5", HX, HY - 1.8, HZ + 1);
+
+// ondes ultrason (anneaux qui s'éloignent)
+const ondes = [];
+for (let i = 0; i < 3; i++) {
+  const o = new THREE.Mesh(new THREE.RingGeometry(0.9, 1.05, 40),
+    new THREE.MeshBasicMaterial({ color: 0x7fd3ff, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false }));
+  o.position.set(HX, HY, HZ + 1.3);
+  scene.add(o);
+  ondes.push(o);
+}
+
+// ---------- 7. Écran LCD 16x2 I2C sur le mur droit ----------
+const LX = FX + 13.4, LY = 17.2, LZ = FZ + 0.6;
+boite(7.5, 3.4, 0.15, PCB_VERT, LX, LY, LZ);
+boite(6.6, 2.0, 0.3, NOIR, LX, LY, LZ + 0.15);
+const toileLCD = document.createElement("canvas");
+toileLCD.width = 512; toileLCD.height = 128;
+const ctxLCD = toileLCD.getContext("2d");
+const textureLCD = new THREE.CanvasTexture(toileLCD);
+const ecranLCD = new THREE.Mesh(new THREE.PlaneGeometry(6.1, 1.55), new THREE.MeshBasicMaterial({ map: textureLCD }));
+ecranLCD.position.set(LX, LY, LZ + 0.31);
+scene.add(ecranLCD);
+etiquette("<b>7</b> Écran LCD I2C · A4/A5", LX, LY + 2.3, LZ + 0.5);
+
+function afficherLCD(l1, l2, allume = true) {
+  ctxLCD.fillStyle = allume ? "#2f6fdb" : "#1b2f55";
+  ctxLCD.fillRect(0, 0, 512, 128);
+  ctxLCD.fillStyle = allume ? "#ffffff" : "#5a6f99";
+  ctxLCD.font = "bold 46px Consolas, monospace";
+  ctxLCD.textBaseline = "middle";
+  ctxLCD.fillText(l1.padEnd(16).slice(0, 16), 16, 36);
+  ctxLCD.fillText(l2.padEnd(16).slice(0, 16), 16, 94);
+  textureLCD.needsUpdate = true;
+}
+
+// ---------- Arduino UNO ----------
+const AX = 14, AZ = 3;
+for (const [dx, dz] of [[-3, -2.2], [3, -2.2], [-3, 2.2], [3, 2.2]]) cyl(0.2, 0.2, 0.5, 0xdddddd, AX + dx, 0.25, AZ + dz);
+boite(6.9, 0.16, 5.3, 0x00878f, AX, 0.58, AZ);
+boite(3.6, 0.4, 1.0, NOIR, AX + 0.6, 0.86, AZ + 0.6);                    // ATmega328P
+boite(1.6, 1.1, 1.2, 0, AX - 3.2, 1.2, AZ - 1.2, scene, METAL);           // USB-B
+boite(1.4, 1.1, 0.9, NOIR, AX - 3.1, 1.2, AZ + 1.6);                      // prise jack
+boite(5.6, 0.8, 0.25, NOIR, AX + 0.4, 1.06, AZ - 2.4);                    // connecteur numérique
+boite(4.8, 0.8, 0.25, NOIR, AX + 0.6, 1.06, AZ + 2.4);                    // alim + analogique
+etiquette("Arduino UNO", AX, 2.8, AZ);
+
+const brocheD = n => [AX + 2.8 - (n - 2) * 0.43, 1.4, AZ - 2.4];
+const brocheA = n => [AX + 2.2 + (n - 4) * 0.43, 1.4, AZ + 2.4];
+const broche5V = [AX - 1.2, 1.4, AZ + 2.4], brocheGND = [AX - 0.75, 1.4, AZ + 2.4];
+
+// ---------- Platine d'essai : bouton, buzzer, LED d'état, résistances ----------
+const BX = 14, BZ = 11.2;
+boite(16.5, 1, 5.5, 0xf4f4f0, BX, 0.5, BZ, scene, { roughness: 0.8 });
+boite(16, 0.02, 0.12, 0xd0021b, BX, 1.01, BZ - 2.3);
+boite(16, 0.02, 0.12, 0x2050d0, BX, 1.01, BZ + 2.3);
+etiquette("Platine d'essai", BX + 5, 1.6, BZ + 2.6);
+
+const baseBouton = boite(1.3, 0.6, 1.3, 0x222222, BX - 6, 1.3, BZ);
+const capBouton = cyl(0.42, 0.42, 0.45, 0xd33a3a, BX - 6, 1.8, BZ);
+etiquette("<b>1</b> Bouton poussoir · D2", BX - 6, 3.2, BZ);
+
+cyl(0.7, 0.7, 0.95, NOIR, BX - 2.5, 1.48, BZ);
+cyl(0.12, 0.12, 0.02, 0x555555, BX - 2.5, 1.96, BZ);
+etiquette("<b>6</b> Buzzer · D8", BX - 2.5, 3.2, BZ);
+
+const matLedEtat = new THREE.MeshStandardMaterial({ color: 0xff4040, emissive: 0x000000, transparent: true, opacity: 0.9 });
+cyl(0.33, 0.33, 0.5, 0, BX + 1, 1.3, BZ, scene, matLedEtat);
+sphere(0.33, 0, BX + 1, 1.55, BZ, scene, matLedEtat);
+etiquette("<b>8</b> LED d'état · D13", BX + 1, 3.0, BZ);
+
+for (let i = 0; i < 4; i++) {                                            // 4 résistances 220 Ω
+  const r = cyl(0.17, 0.17, 1.1, 0xd9c49a, BX + 3.6 + i * 1.1, 1.25, BZ + 0.6);
+  r.rotation.x = Math.PI / 2;
+  for (const [dz, c] of [[-0.25, 0xd0021b], [0, 0xd0021b], [0.2, 0x8d5a2b]]) {
+    const bande = cyl(0.18, 0.18, 0.08, c, BX + 3.6 + i * 1.1, 1.25, BZ + 0.6 + dz);
+    bande.rotation.x = Math.PI / 2;
+  }
+}
+etiquette("Résistances 220 Ω", BX + 5.2, 2.6, BZ + 0.6);
+
+// ---------- Raspberry Pi ----------
+const PX = -16.5, PZ = 6;
+boite(8.5, 0.16, 5.6, 0x1f8a3d, PX, 0.58, PZ);
+boite(1.5, 0.3, 1.5, 0, PX - 0.5, 0.8, PZ + 0.3, scene, METAL);             // processeur
+boite(5.1, 0.8, 0.5, NOIR, PX - 0.5, 1.06, PZ - 2.4);                     // GPIO
+for (const dz of [-1.6, 0.4]) boite(1.7, 1.5, 1.3, 0, PX + 3.6, 1.4, PZ + dz, scene, METAL);
+boite(2.0, 1.4, 1.6, 0, PX + 3.6, 1.35, PZ + 2.0, scene, METAL);           // Ethernet
+boite(0.4, 0.5, 2.0, 0xeeeeee, PX - 1.5, 0.9, PZ + 0.3);                  // connecteur CSI
+etiquette("Raspberry Pi · main.py", PX, 3.0, PZ);
+
+// =====================================================================
+// Fils (mêmes couleurs que le schéma électrique)
+// =====================================================================
+const ROUGE5V = 0xd0021b, FIL_GND = 0x222222;
+const RAIL5V = BZ - 2.3, RAILGND = BZ + 2.3;          // rails de la platine (z)
+const resistanceX = i => BX + 3.6 + i * 1.1;           // 0 = LED d'état, 1-3 = R, G, B
+
+// Arduino -> rails d'alimentation de la platine
+fil([broche5V, [broche5V[0], 3, AZ + 4.3], [broche5V[0] - 0.3, 1.1, RAIL5V]], ROUGE5V, 0.15);
+fil([brocheGND, [brocheGND[0], 3.4, AZ + 4.6], [brocheGND[0] + 0.3, 1.1, RAILGND]], FIL_GND, 0.15);
+
+// Bouton (D2 + GND), buzzer (D8 + GND)
+fil([brocheD(2), [brocheD(2)[0], 4, 4], [BX - 5.2, 4, BZ - 2], [BX - 6, 2.2, BZ - 0.7]], 0x2e9d3a);
+fil([brocheD(8), [brocheD(8)[0], 3.5, 4.5], [BX - 2.5, 3.5, BZ - 2], [BX - 2.5, 2.0, BZ - 0.75]], 0x8d5a2b);
+for (const x of [BX - 5.6, BX - 2.1, BX + 0.7]) {      // cavaliers vers la masse (bouton, buzzer, LED d'état)
+  fil([[x, 1.1, BZ + 0.4], [x, 1.8, BZ + 1.5], [x, 1.05, RAILGND]], FIL_GND, 0.1);
+}
+
+// LED d'état : D13 -> résistance 220 Ω -> LED
+fil([brocheD(13), [brocheD(13)[0], 3, 5], [resistanceX(0), 2.6, 9.7], [resistanceX(0), 1.35, 11.2]], 0x00897b);
+fil([[resistanceX(0), 1.35, 12.4], [16.5, 2.0, 12.8], [BX + 1.3, 1.4, BZ + 0.3]], 0x00897b, 0.1);
+
+// LED RGB : D10/D11/D12 -> résistance 220 Ω -> LED sur le linteau (+ masse commune)
+[[10, 0xe53935], [11, 0x43a047], [12, 0x1e63d6]].forEach(([n, c], i) => {
+  const o = (n - 11) * 0.35, rx = resistanceX(i + 1);
+  fil([brocheD(n), [brocheD(n)[0], 3.2, 5], [rx, 2.6, 9.7], [rx, 1.35, 11.2]], c);
+  fil([[rx, 1.35, 12.4], [rx, 3.2, 13.6], [rx - 1, 5.6, 9], [12 + o, 6.5, -9.4 + o * 0.2],
+       [FX + o, 24.5, -9.3], [FX - 4.5 + o * 0.6, 27.2, FZ - 0.75]], c);
+});
+fil([[8.0, 1.1, RAILGND], [8, 5.2, 8], [11.4, 6.8, -10.1], [FX - 0.6, 24.8, -9.8], [FX - 4.0, 27.2, FZ - 0.75]], FIL_GND);
+
+// Servo : signal D9 + alimentation, derrière le mur jusqu'à la charnière
+fil([brocheD(9), [brocheD(9)[0], 4, -1], [6, 4, -9.2], [-6, 4, -9.4], [FX - 8, 6, -9.0],
+     [FX - 8, 25, -8.6], [FX - 8, 27.6, FZ - 0.8]], 0xf57c00);
+fil([[7, 1.1, RAIL5V], [7, 4, 5], [6.5, 4.4, -9.6], [-6, 4.4, -9.8], [FX - 8.4, 6, -9.4],
+     [FX - 8.4, 25, -9.0], [FX - 8.4, 27.4, FZ - 0.8]], ROUGE5V);
+fil([[6.5, 1.1, RAILGND], [6, 4.8, 9], [6, 4.8, -10.0], [-6, 4.8, -10.2], [FX - 7.6, 6, -9.8],
+     [FX - 7.6, 25, -9.4], [FX - 7.6, 27.4, FZ - 0.8]], FIL_GND);
+
+// PIR : OUT D3 + alimentation
+fil([brocheD(3), [brocheD(3)[0], 4, -1], [13, 6, -9.2], [6, 24, -9.2], [FX + 4.5, 27.3, FZ - 1.3]], 0xe3a008);
+fil([[7.6, 1.1, RAIL5V], [7.6, 4, 4], [13.4, 6.4, -9.6], [6.4, 24, -9.6], [FX + 4.0, 27.3, FZ - 1.3]], ROUGE5V);
+fil([[7.2, 1.1, RAILGND], [7.2, 5, 8], [13.8, 6.8, -9.9], [6.8, 24.4, -9.9], [FX + 5.0, 27.3, FZ - 1.3]], FIL_GND);
+
+// Ultrason : VCC, TRIG D4, ECHO D5, GND
+[[4, 0x1f6fd1, -0.5], [5, 0x7b3fbf, 0.5]].forEach(([n, c, o]) => {
+  fil([brocheD(n), [brocheD(n)[0], 4, 1.5], [HX + o, 6, -5.4], [HX + o, HY - 1.0, HZ - 0.05]], c);
+});
+fil([[8.6, 1.1, RAIL5V], [8.6, 3.5, 6], [HX - 1.6, 6, -5.4], [HX - 1.6, HY - 1.0, HZ - 0.05]], ROUGE5V);
+fil([[8.9, 1.1, RAILGND], [9.2, 4.5, 8], [HX + 1.6, 6.4, -5.3], [HX + 1.6, HY - 1.0, HZ - 0.05]], FIL_GND);
+
+// LCD I2C : GND, VCC, SDA (A4), SCL (A5)
+const filLCD = (debut, couleur, o) =>
+  fil([debut, [debut[0], 5, debut[2] > AZ + 3 ? 6 : AZ + 1], [13.5, 6.2, -2], [LX + 4.4 + o, 11, -5.6],
+       [LX + 2.6 + o, LY - 1.7, LZ - 0.05]], couleur);
+filLCD(brocheA(4), 0x0097a7, -0.3);
+filLCD(brocheA(5), 0xad1457, 0.3);
+filLCD([9.6, 1.1, RAIL5V], ROUGE5V, -0.9);
+filLCD([9.9, 1.1, RAILGND], FIL_GND, -1.5);
+// Nappe de la caméra (derrière le mur gauche jusqu'au Raspberry Pi)
+fil([[FX, 27.5, FZ + 0.7], [FX, 28.1, FZ], [FX, 27.4, FZ - 1.4], [-14, 22, -8.9], [-20, 9, -8.6],
+     [-20.4, 2, -5], [-18.5, 1.2, PZ - 1], [PX - 1.5, 1.1, PZ + 0.3]], 0xe8dcc0, 0.2);
+// Câble USB Raspberry Pi ⇄ Arduino
+fil([[PX + 4.4, 1.4, PZ - 1.6], [PX + 6.5, 0.35, PZ + 3], [-6, 0.35, 16.5], [6, 0.35, 16.5],
+     [AX - 6, 0.35, AZ + 2], [AX - 4.1, 1.2, AZ - 1.2]], 0x4a4a4a, 0.32);
+etiquette("Câble USB (série 9600 bauds)", 0, 1.5, 16.5);
+
+// =====================================================================
+// Figurine du visiteur + effets magiques
+// =====================================================================
+const figurine = new THREE.Group();
+cyl(1.0, 1.5, 5, 0x3f6ad8, 0, 2.5, 0, figurine);
+sphere(1.15, 0xf1c27d, 0, 6.2, 0, figurine);
+for (const dx of [-0.4, 0.4]) sphere(0.15, NOIR, dx, 6.4, -1.05, figurine);
+ajouter(new THREE.ConeGeometry(1.0, 2.2, 24), 0x6b46c1, 0, 8.1, 0, figurine);   // chapeau de sorcier
+figurine.visible = false;
+figurine.position.set(FX, 0, 22);
+scene.add(figurine);
+const etiquetteFig = document.createElement("div");
+etiquetteFig.className = "label";
+const objetFig = new THREE.CSS2DObject(etiquetteFig);
+objetFig.position.set(0, 10.2, 0);
+figurine.add(objetFig);
+
+// cône de reconnaissance faciale depuis la caméra
+const geoCone = new THREE.ConeGeometry(3.2, 20, 32, 1, true);
+geoCone.rotateX(-Math.PI / 2);
+geoCone.translate(0, 0, 10);
+const cone = new THREE.Mesh(geoCone, new THREE.MeshBasicMaterial({
+  color: 0x8fe3ff, transparent: true, opacity: 0.15, side: THREE.DoubleSide, depthWrite: false }));
+cone.position.set(FX, 26.3, FZ + 1.6);
+cone.visible = false;
+scene.add(cone);
+
+// étincelles autour de la porte quand elle s'ouvre
+const NB_ETINCELLES = 220;
+const posEtincelles = new Float32Array(NB_ETINCELLES * 3);
+for (let i = 0; i < NB_ETINCELLES; i++) {
+  posEtincelles[i * 3] = FX + (Math.random() - 0.5) * 20;
+  posEtincelles[i * 3 + 1] = Math.random() * 28;
+  posEtincelles[i * 3 + 2] = FZ + (Math.random() - 0.2) * 14;
+}
+const geoEtincelles = new THREE.BufferGeometry();
+geoEtincelles.setAttribute("position", new THREE.BufferAttribute(posEtincelles, 3));
+const etincelles = new THREE.Points(geoEtincelles, new THREE.PointsMaterial({
+  color: 0xffe066, size: 0.45, transparent: true, opacity: 0, depthWrite: false }));
+scene.add(etincelles);
+
+// =====================================================================
+// Comportement (même logique que porte_magique.ino)
+// =====================================================================
+let systemeActif = false, etat = "VEILLE", nomVisiteur = "";
+let angle = 0, angleCible = 0;
+let figZ = 20, cibleFig = 20, jeton = 0;
+let sonActif = true, audio = null;
+
+const lignesSerie = [];
+function serie(texte, versArduino = false) {
+  lignesSerie.push((versArduino ? "PC → " : "UNO → ") + texte);
+  while (lignesSerie.length > 7) lignesSerie.shift();
+  document.getElementById("serie").textContent = lignesSerie.join("\n");
+}
+
+function changerEtat(nouveau) {
+  etat = nouveau;
+  const messages = {
+    VEILLE: ["Porte magique", "Zzz..."],
+    PRESENCE: ["Bonjour !", "Approchez-vous"],
+    RECONNAISSANCE: ["Regardez la", "camera..."],
+    OUVERTE: ["Bienvenue", nomVisiteur],
+    REFUSEE: ["Acces refuse", "Visage inconnu"],
+  };
+  if (!systemeActif) afficherLCD("Porte magique", "Systeme OFF");
+  else afficherLCD(...messages[etat]);
+  majPanneau();
+}
+
+function majPanneau() {
+  document.getElementById("etat").innerHTML =
+    `Système : <b>${systemeActif ? "ON" : "OFF"}</b><br>` +
+    `État : <b>${systemeActif ? etat : "—"}</b><br>` +
+    `Porte : <b>${Math.round(angle)}°</b>`;
+}
+
+function melodie(notes, duree) {
+  if (!sonActif) return;
+  audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+  notes.forEach((f, i) => {
+    const osc = audio.createOscillator(), gain = audio.createGain();
+    const t = audio.currentTime + i * duree / 1000;
+    osc.type = "square";
+    osc.frequency.value = f;
+    gain.gain.setValueAtTime(0.06, t);
+    gain.gain.exponentialRampToValueAtTime(0.001, t + duree / 1000 * 0.9);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);
+    osc.stop(t + duree / 1000);
+  });
+}
+const MAGIQUE = [523, 659, 784, 1047, 1319, 1568, 2093], REFUS = [330, 220];
+
+// La porte parle (même phrase que voix.py côté Python)
+function parler(texte, delai = 0) {
+  serie("VOIX:" + texte, true);
+  if (!sonActif || !("speechSynthesis" in window)) return;
+  setTimeout(() => {
+    const phrase = new SpeechSynthesisUtterance(texte);
+    phrase.lang = "fr-FR";
+    speechSynthesis.speak(phrase);
+  }, delai);
+}
+
+function basculer() {
+  jeton++;                                      // annule le scénario en cours
+  systemeActif = !systemeActif;
+  angleCible = 0;
+  figurine.visible = false;
+  melodie(systemeActif ? [784, 1047] : [1047, 784], 120);
+  serie(systemeActif ? "EVT:SYSTEME_ON" : "EVT:SYSTEME_OFF");
+  changerEtat("VEILLE");
+}
+
+const attendre = ms => new Promise(r => setTimeout(r, ms));
+
+async function visiteur(autorise) {
+  const moi = ++jeton;
+  const annule = () => moi !== jeton;
+  if (!systemeActif) { basculer(); jeton = moi; await attendre(600); }
+  angleCible = 0;
+  changerEtat("VEILLE");
+  etiquetteFig.textContent = autorise ? "Marie (autorisée)" : "Inconnu";
+  figurine.visible = true;
+  figZ = cibleFig = 22;
+  cibleFig = 12;
+
+  await attendre(1200); if (annule()) return;
+  changerEtat("PRESENCE");
+  serie("EVT:PRESENCE_DETECTEE");
+  cibleFig = 3;
+
+  await attendre(1700); if (annule()) return;
+  changerEtat("RECONNAISSANCE");
+  serie("EVT:VISAGE_DEMANDE");
+
+  await attendre(2000); if (annule()) return;
+  if (autorise) {
+    serie("OPEN:Marie", true);
+    nomVisiteur = "Marie";
+    angleCible = 90;
+    changerEtat("OUVERTE");
+    serie("EVT:PORTE_OUVERTE:Marie");
+    melodie(MAGIQUE, 120);
+    parler("Yokoso Marie", 900);               // après la mélodie
+    await attendre(1600); if (annule()) return;
+    cibleFig = -14;                             // la figurine traverse la porte
+    await attendre(3400); if (annule()) return;
+    angleCible = 0;
+    changerEtat("PRESENCE");
+    serie("EVT:PORTE_FERMEE");
+    await attendre(1500); if (annule()) return;
+    figurine.visible = false;
+  } else {
+    serie("DENY", true);
+    changerEtat("REFUSEE");
+    serie("EVT:ACCES_REFUSE");
+    melodie(REFUS, 300);
+    parler("Accès refusé", 650);
+    await attendre(3000); if (annule()) return;
+    cibleFig = 24;                              // l'inconnu repart
+    changerEtat("PRESENCE");
+    await attendre(3000); if (annule()) return;
+    figurine.visible = false;
+  }
+  await attendre(1500); if (annule()) return;
+  changerEtat("VEILLE");
+  serie("EVT:VEILLE");
+}
+
+document.getElementById("btnAutorise").onclick = () => visiteur(true);
+document.getElementById("btnInconnu").onclick = () => visiteur(false);
+document.getElementById("btnOnOff").onclick = basculer;
+document.getElementById("btnEtiquettes").onclick = () => etiquettes.forEach(e => e.visible = !e.visible);
+document.getElementById("btnSon").onclick = e => {
+  sonActif = !sonActif;
+  e.target.textContent = sonActif ? "🔊 Son" : "🔇 Muet";
+};
+
+// clic sur le bouton poussoir 3D
+const rayon = new THREE.Raycaster(), souris = new THREE.Vector2();
+let departClic = null;
+renderer.domElement.addEventListener("pointerdown", e => departClic = [e.clientX, e.clientY]);
+renderer.domElement.addEventListener("pointerup", e => {
+  if (!departClic || Math.hypot(e.clientX - departClic[0], e.clientY - departClic[1]) > 5) return;
+  souris.set(e.clientX / innerWidth * 2 - 1, -e.clientY / innerHeight * 2 + 1);
+  rayon.setFromCamera(souris, camera);
+  if (rayon.intersectObjects([baseBouton, capBouton]).length) basculer();
+});
+
+// =====================================================================
+// Animation
+// =====================================================================
+const ARC_EN_CIEL = [0xff0000, 0xffff00, 0x00ff00, 0x00ffff, 0x0000ff, 0xff00ff];
+function couleurRGB(t) {
+  if (!systemeActif) return 0x000000;
+  switch (etat) {
+    case "VEILLE":         return t % 2000 < 100 ? 0xff00ff : 0x000000;
+    case "PRESENCE":       return 0x0000ff;
+    case "RECONNAISSANCE": return Math.floor(t / 250) % 2 ? 0x00ffff : 0x0000ff;
+    case "OUVERTE":        return ARC_EN_CIEL[Math.floor(t / 150) % 6];
+    case "REFUSEE":        return Math.floor(t / 200) % 2 ? 0xff0000 : 0x000000;
+  }
+}
+
+const horloge = new THREE.Clock();
+function animer() {
+  requestAnimationFrame(animer);
+  const dt = Math.min(horloge.getDelta(), 0.05), t = performance.now();
+
+  // servo : ~66°/s, comme 1° toutes les 15 ms dans l'Arduino
+  const pas = 66 * dt;
+  angle = Math.abs(angleCible - angle) <= pas ? angleCible : angle + Math.sign(angleCible - angle) * pas;
+  pivot.rotation.y = corne.rotation.y = -THREE.MathUtils.degToRad(angle);
+
+  // figurine
+  if (figurine.visible) {
+    const d = cibleFig - figZ, v = 6 * dt;
+    const marche = Math.abs(d) > v;
+    figZ = marche ? figZ + Math.sign(d) * v : cibleFig;
+    figurine.position.set(FX, marche ? Math.abs(Math.sin(t / 110)) * 0.4 : 0, figZ);
+    figurine.rotation.y = d > 0.01 ? Math.PI : 0;
+  }
+
+  objetFig.visible = figurine.visible;   // CSS2D ne suit pas la visibilité du parent
+
+  // LED RGB, LED d'état, porte lumineuse
+  const c = couleurRGB(t);
+  matRGB.emissive.setHex(c);
+  lumiereRGB.color.setHex(c || 0xffffff);
+  lumiereRGB.intensity = c ? 1.8 : 0;
+  matLedEtat.emissive.setHex(systemeActif ? 0xff2020 : 0x000000);
+  matPorte.emissiveIntensity = etat === "OUVERTE" && systemeActif ? 0.6 + 0.3 * Math.sin(t / 150) : 0.25;
+
+  // ondes ultrason (le capteur mesure en continu quand le système est ON)
+  ondes.forEach((o, i) => {
+    const p = ((t / 900) + i / 3) % 1;
+    o.scale.setScalar(1 + p * 4);
+    o.position.z = HZ + 1.3 + p * 6;
+    o.material.opacity = systemeActif ? (1 - p) * 0.5 : 0;
+  });
+
+  // cône de reconnaissance
+  cone.visible = systemeActif && etat === "RECONNAISSANCE";
+  if (cone.visible) {
+    cone.lookAt(figurine.position.x, 6.2, figurine.position.z);
+    cone.material.opacity = 0.12 + 0.08 * Math.sin(t / 120);
+  }
+
+  // étincelles
+  const visibles = systemeActif && etat === "OUVERTE";
+  etincelles.material.opacity += ((visibles ? 0.95 : 0) - etincelles.material.opacity) * 0.08;
+  if (etincelles.material.opacity > 0.01) {
+    const pos = geoEtincelles.attributes.position;
+    for (let i = 0; i < NB_ETINCELLES; i++) {
+      let y = pos.getY(i) + dt * (1.5 + (i % 5) * 0.5);
+      pos.setY(i, y > 28 ? 0 : y);
+    }
+    pos.needsUpdate = true;
+    etincelles.material.size = 0.35 + 0.15 * Math.sin(t / 90);
+  }
+
+  if (Math.round(angle) !== angle || angle !== angleCible) majPanneau();
+  controls.update();
+  renderer.render(scene, camera);
+  labelRenderer.render(scene, camera);
+}
+
+addEventListener("resize", () => {
+  camera.aspect = innerWidth / innerHeight;
+  camera.updateProjectionMatrix();
+  renderer.setSize(innerWidth, innerHeight);
+  labelRenderer.setSize(innerWidth, innerHeight);
+});
+
+changerEtat("VEILLE");
+serie("INFO:Arduino pret");
+animer();
+</script>
+</body>
+</html>

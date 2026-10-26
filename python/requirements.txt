@@ -1,0 +1,5 @@
+opencv-contrib-python<5   # OpenCV 5 ne fournit plus le détecteur de visages Haar
+numpy
+pyserial
+# Si opencv-python est déjà installé : pip uninstall opencv-python (conflit avec contrib)
+# Sur Raspberry Pi : sudo apt install python3-picamera2 python3-opencv python3-serial
